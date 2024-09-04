@@ -36,34 +36,30 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
     assert(
         host::is_contiguous_on(measurement_module_projection(), measurements));
 
-    // Get copy of barcode uniques
-    std::vector<measurement> uniques;
-    uniques.resize(measurements.size());
-
-    auto end = std::unique_copy(measurements.begin(), measurements.end(),
-                                uniques.begin(), measurement_equal_comp());
-    const unsigned int n_modules = end - uniques.begin();
-
-    // Get upper bounds of unique elements
-    std::vector<unsigned int> upper_bounds;
-    upper_bounds.reserve(n_modules);
-    for (unsigned int i = 0; i < n_modules; i++) {
-        auto up = std::upper_bound(measurements.begin(), measurements.end(),
-                                   uniques[i], measurement_sort_comp());
-        upper_bounds.push_back(std::distance(measurements.begin(), up));
-    }
     const auto n_meas = measurements.size();
 
-    // Get the number of measurements of each module
-    std::vector<unsigned int> sizes(n_modules);
-    std::adjacent_difference(upper_bounds.begin(), upper_bounds.end(),
-                             sizes.begin());
+    // Get index ranges in the measurement container per detector surface
+    std::vector<unsigned int> meas_ranges;
+    meas_ranges.reserve(det.surfaces().size());
 
-    // Create barcode sequence
-    std::vector<detray::geometry::barcode> barcodes;
-    barcodes.reserve(n_modules);
-    for (unsigned int i = 0; i < n_modules; i++) {
-        barcodes.push_back(uniques[i].surface_link);
+    for (const auto& sf_desc : det.surfaces()) {
+        // Measurements can only be found on sensitive surfaces
+        if (!sf_desc.is_sensitive()) {
+            // Lower range index is the upper index of the previous range
+            // This is guaranteed by the measurement sorting step
+            const auto sf_idx{sf_desc.index()};
+            const unsigned int lo{sf_idx == 0u ? 0u : meas_ranges[sf_idx - 1u]};
+
+            // Hand the upper index of the previous range through to assign
+            // the lower index of the next valid range correctly
+            meas_ranges.push_back(lo);
+            continue;
+        }
+
+        auto up = std::upper_bound(measurements.begin(), measurements.end(),
+                                   sf_desc.barcode(), measurement_bcd_comp());
+        meas_ranges.push_back(
+            static_cast<unsigned int>(std::distance(measurements.begin(), up)));
     }
 
     std::vector<std::vector<candidate_link>> links;
@@ -131,7 +127,7 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
              * Material interaction
              *************************/
 
-            // Get surface corresponding to bound params
+            // Get surface corresponding to bound track params
             const detray::tracking_surface sf{det, in_param.surface_link()};
 
             const cxt_t ctx{};
@@ -145,37 +141,17 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
                 in_param, interactor_state,
                 static_cast<int>(detray::navigation::direction::e_forward), sf);
 
-            // Get barcode and measurements range on surface
-            const auto bcd = in_param.surface_link();
-            std::pair<unsigned int, unsigned int> range;
-
-            // Find the corresponding index of bcd in barcode vector
-
-            const auto lo2 =
-                std::lower_bound(barcodes.begin(), barcodes.end(), bcd);
-
-            const auto bcd_id = std::distance(barcodes.begin(), lo2);
-
-            if (lo2 == barcodes.begin()) {
-                range.first = 0u;
-                range.second = upper_bounds[bcd_id];
-            } else if (lo2 == barcodes.end()) {
-                range.first = 0u;
-                range.second = 0u;
-            } else {
-                range.first = upper_bounds[bcd_id - 1];
-                range.second = upper_bounds[bcd_id];
-            }
-
-            unsigned int n_branches = 0;
-
             /*****************************************************************
              * Find tracks (CKF)
              *****************************************************************/
+            unsigned int n_branches = 0;
 
             // Iterate over the measurements
-            for (unsigned int item_id = range.first; item_id < range.second;
-                 item_id++) {
+            const auto sf_idx{in_param.surface_link().index()};
+            const unsigned int lo{sf_idx == 0u ? 0u : meas_ranges[sf_idx - 1]};
+            const unsigned int up{meas_ranges[sf_idx]};
+
+            for (unsigned int item_id = lo; item_id < up; item_id++) {
                 if (n_branches > m_cfg.max_num_branches_per_surface) {
                     break;
                 }
