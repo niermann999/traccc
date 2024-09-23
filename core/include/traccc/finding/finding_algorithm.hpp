@@ -54,14 +54,13 @@ class finding_algorithm
     using scalar_type = detray::dscalar<algebra_type>;
 
     /// Actor types
+    using aborter = detray::pathlimit_aborter;
     using transporter = detray::parameter_transporter<algebra_type>;
     using interactor = detray::pointwise_material_interactor<algebra_type>;
+    using resetter = detray::parameter_resetter<algebra_type>;
 
-    /// Actor chain for propagate to the next surface and its propagator type
-    using actor_type =
-        detray::actor_chain<detray::tuple, detray::pathlimit_aborter,
-                            transporter, interaction_register<interactor>,
-                            interactor, ckf_aborter>;
+    using actor_type = detray::actor_chain<detray::tuple, aborter, transporter,
+                                           interactor, resetter>;
 
     using propagator_type =
         detray::propagator<stepper_t, navigator_t, actor_type>;
@@ -69,6 +68,29 @@ class finding_algorithm
     using interactor_type = detray::pointwise_material_interactor<algebra_type>;
 
     using bfield_type = typename stepper_t::magnetic_field_type;
+
+    // Trace the measurements and number of holes per track
+    struct trace_state {
+        unsigned int n_skipped{0u};
+        vecmem::vector<track_candidate> meas_trace{};
+    };
+
+    /// Package measurements with the corresponding filtered track parameters
+    struct candidate {
+        bound_track_parameters filtered_params;
+        unsigned int meas_id;
+        float chi2;
+
+        /// @param rhs is the right hand side candidate for comparison
+        constexpr bool operator<(const candidate& rhs) const {
+            return (chi2 < rhs.chi2);
+        }
+
+        /// @param rhs is the left hand side candidate for comparison
+        constexpr bool operator>(const candidate& rhs) const {
+            return (chi2 > rhs.chi2);
+        }
+    };
 
     public:
     /// Configuration type
@@ -100,4 +122,5 @@ class finding_algorithm
 
 }  // namespace traccc
 
-#include "traccc/finding/finding_algorithm.ipp"
+//#include "traccc/finding/finding_algorithm.ipp"
+#include "traccc/finding/finding_algorithm_alt.ipp"
