@@ -69,6 +69,11 @@ class finding_algorithm
 
     using bfield_type = typename stepper_t::magnetic_field_type;
 
+    struct navigation_stream {
+        typename navigator_t::state navigation;
+        bound_track_parameters track_params;
+    };
+
     // Trace the measurements and number of holes per track
     struct trace_state {
         unsigned int n_skipped{0u};

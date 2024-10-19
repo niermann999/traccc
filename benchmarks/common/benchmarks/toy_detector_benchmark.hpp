@@ -164,7 +164,7 @@ class ToyDetectorBenchmark : public benchmark::Fixture {
     void apply_propagation_config(config_t& cfg) const {
 
         // Configure the propagation for the toy detector
-        cfg.propagation.navigation.search_window = {3, 3};
+        // cfg.propagation.navigation.search_window = {3, 3};
         cfg.propagation.navigation.overstep_tolerance =
             -300.f * detray::unit<float>::um;
         cfg.propagation.navigation.min_mask_tolerance =

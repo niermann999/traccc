@@ -114,6 +114,9 @@ struct kalman_actor : detray::actor {
                 return;
             }
 
+            // Update the propagation flow
+            propagation._stepping._bound_params = trk_state.filtered();
+
             // Set full jacobian
             trk_state.jacobian() = stepping._full_jacobian;
 

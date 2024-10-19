@@ -13,7 +13,6 @@
 
 // System include
 #include <algorithm>
-//#include <iostream>
 
 namespace traccc {
 
@@ -60,14 +59,14 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
      * CKF Preparations
      *****************************************************************/
     const std::size_t n_seeds{seeds.size()};
-    const unsigned int n_max_prop_streams{
+    const unsigned int n_max_nav_streams{
         math::min(m_cfg.max_num_branches_per_seed, 20000u)};
     const unsigned int n_max_branches_per_surface{
         math::min(m_cfg.max_num_branches_per_surface, 10u)};
 
     // Measurement trace per track
     std::vector<trace_state> track_traces;
-    track_traces.resize(n_seeds * n_max_prop_streams);
+    track_traces.resize(n_seeds * n_max_nav_streams);
 
     // Compatible measurements and filtered track params on a given surface
     std::vector<candidate> candidates{};
@@ -78,19 +77,23 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
 
     // Propagation states: One inner vector per seed, which contains
     // the branched propagation states for the respective seed
-    std::vector<std::vector<typename propagator_type::state>> prop_states;
-    prop_states.reserve(n_seeds);
+    std::vector<std::vector<navigation_stream>> nav_streams_per_seed;
+    nav_streams_per_seed.reserve(n_seeds);
 
-    // Create initial propagation flow for each seed
+    // Create initial navigation stream for each seed
     for (const auto& seed : seeds) {
-        auto& prop_states_per_seed = prop_states.emplace_back();
-        prop_states_per_seed.reserve(n_max_prop_streams);
+        auto& nav_streams = nav_streams_per_seed.emplace_back();
+        nav_streams.reserve(n_max_nav_streams);
 
-        auto& propagation = prop_states_per_seed.emplace_back(seed, field, det);
+        auto& nav_stream =
+            nav_streams.emplace_back(typename navigator_t::state(det), seed);
+        nav_stream.navigation.set_volume(seed.surface_link().volume());
 
-        propagation.set_particle(
-            detail::correct_particle_hypothesis(m_cfg.ptc_hypothesis, seed));
-        propagation._navigation.set_volume(seed.surface_link().volume());
+        // Construct propagation state around the navigation stream
+        typename propagator_type::non_owning_state propagation(
+            nav_stream.track_params, field, nav_stream.navigation);
+        propagation.set_particle(detail::correct_particle_hypothesis(
+            m_cfg.ptc_hypothesis, nav_stream.track_params));
 
         // Create actor states
         typename aborter::state s0{m_cfg.propagation.stepping.path_limit};
@@ -104,41 +107,44 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
 
         // Make sure the CKF can start on a sensitive surface
         if (propagation._heartbeat &&
-            !propagation._navigation.is_on_sensitive()) {
+            !nav_stream.navigation.is_on_sensitive()) {
             propagator.propagate_to_next(propagation, actor_states);
         }
         // Either exited detector by portal right away or are on first
         // sensitive surface
-        assert(propagation._navigation.is_complete() ||
-               propagation._navigation.is_on_sensitive());
+        assert(nav_stream.navigation.is_complete() ||
+               nav_stream.navigation.is_on_sensitive());
     }
 
     // Step through the sensitive surfaces along the tracks
     const auto n_steps{static_cast<int>(m_cfg.max_track_candidates_per_track)};
     for (int step = 0; step < n_steps; step++) {
+
         // Step through all track candidates (branches) for a given seed
         for (unsigned int seed_idx = 0u; seed_idx < n_seeds; seed_idx++) {
 
-            auto& prop_streams = prop_states[seed_idx];
-            const auto n_tracks{static_cast<unsigned int>(prop_streams.size())};
+            auto& nav_streams = nav_streams_per_seed[seed_idx];
+            const auto n_tracks{static_cast<unsigned int>(nav_streams.size())};
+            assert(n_tracks >= 1u);
             for (unsigned int trk_idx = 0u; trk_idx < n_tracks; ++trk_idx) {
-                // The propagation flow for this track
-                auto& propagation = prop_streams[trk_idx];
+                // The navigation stream for this track
+                auto& nav_stream = nav_streams[trk_idx];
+                const auto& navigation = nav_stream.navigation;
 
                 // Propagation is no longer alive (track finished or hit error)
-                if (!propagation._heartbeat) {
+                if (!navigation.is_alive()) {
                     continue;
                 }
-                assert(propagation._navigation.is_on_sensitive());
+                assert(navigation.is_on_sensitive());
 
                 // Conditions context for this propagation
-                const cxt_t ctx{};
+                // const cxt_t ctx{};
                 // Get current detector surface (sensitive)
-                const auto sf = propagation._navigation.get_surface();
+                const auto sf = navigation.get_surface();
 
                 /***************************************************************
                  * Find compatible measurements
-                 ***************************************************************/
+                 **************************************************************/
 
                 // Iterate over the measurements for this surface
                 const auto sf_idx{sf.index()};
@@ -151,36 +157,22 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
                     track_state<algebra_type> trk_state(measurements[meas_id]);
 
                     // Run the Kalman update on a copy of the track parameters
-                    bound_track_parameters bound_param(
-                        propagation._stepping._bound_params);
                     const bool res = sf.template visit_mask<
-                        gain_matrix_updater<algebra_type>>(trk_state,
-                                                           bound_param);
-
+                        gain_matrix_updater<algebra_type>>(
+                        trk_state, nav_stream.track_params);
                     // Found a good measurement?
-                    const auto chi2 = trk_state.filtered_chi2();
-                    if (res && chi2 < m_cfg.chi2_max) {
+                    if (const auto chi2 = trk_state.filtered_chi2();
+                        res && chi2 < m_cfg.chi2_max) {
                         candidates.emplace_back(trk_state.filtered(), meas_id,
                                                 chi2);
                     }
                 }
 
                 /***************************************************************
-                 * Update current propagation flow and branch
-                 ***************************************************************/
+                 * Update current navigation stream and branch
+                 **************************************************************/
 
-                /// Update the bound and free track parameters after the KF
-                auto update_params =
-                    [&ctx, &sf](typename propagator_type::state& prop_state,
-                                const bound_track_parameters& new_params) {
-                        auto& current_params =
-                            prop_state._stepping._bound_params;
-                        current_params = new_params;
-                        prop_state._stepping() =
-                            sf.bound_to_free_vector(ctx, current_params);
-                    };
-
-                const unsigned int trace_idx{seed_idx * n_max_prop_streams +
+                const unsigned int trace_idx{seed_idx * n_max_nav_streams +
                                              trk_idx};
 
                 // Count hole in case no measurements were found
@@ -191,17 +183,16 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
                     // consider the track to be finished
                     if (track_traces[trace_idx].n_skipped >
                         m_cfg.max_num_skipping_per_cand) {
-                        propagation._heartbeat &=
-                            propagation._navigation.abort();
-                        assert(!propagation._heartbeat);
+                        nav_stream.navigation.abort();
+                        assert(!navigation.is_alive());
                     }
                 } else {
                     // Consider only the best candidates
                     std::sort(candidates.begin(), candidates.end());
 
-                    // Update the track parameters in the current propagation
-                    // with the closest candidate - use the rest for branching
-                    update_params(propagation, candidates[0u].filtered_params);
+                    // Update the track parameters in the current navigation
+                    nav_stream.track_params = candidates[0u].filtered_params;
+                    nav_stream.navigation.set_high_trust();
 
                     // Number of potential new branches
                     unsigned int n_branches = math::min(
@@ -209,9 +200,8 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
                         n_max_branches_per_surface);
 
                     // Number of allowed new branches
-                    auto allowed_branches{
-                        static_cast<int>(n_max_prop_streams) -
-                        static_cast<int>(prop_streams.size())};
+                    auto allowed_branches{static_cast<int>(n_max_nav_streams) -
+                                          static_cast<int>(nav_streams.size())};
                     allowed_branches =
                         math::signbit(allowed_branches) ? 0 : allowed_branches;
 
@@ -220,26 +210,26 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
                         math::min(n_branches,
                                   static_cast<unsigned int>(allowed_branches));
                     for (unsigned int i = 0u; i < n_branches; ++i) {
-                        // Clone current propagation flow for new branch
-                        prop_streams.push_back(propagation);
-                        update_params(prop_streams.back(),
-                                      candidates[i + 1].filtered_params);
+                        // Clone current navigation stream for new branch
+                        nav_streams.emplace_back(
+                            nav_stream.navigation,
+                            candidates[i + 1u].filtered_params);
 
                         // Copy the measurements that were gathered up until now
                         // to the trace of the new branch
                         // @TODO: Need multitrajectory?
-                        const std::size_t branch_idx{prop_streams.size() - 1u};
+                        const std::size_t branch_idx{nav_streams.size() - 1u};
                         const std::size_t new_trace_idx{
-                            seed_idx * n_max_prop_streams + branch_idx};
+                            seed_idx * n_max_nav_streams + branch_idx};
                         track_traces[new_trace_idx].meas_trace =
                             track_traces[trace_idx].meas_trace;
 
                         // Add new measurement
                         track_traces[new_trace_idx].meas_trace.push_back(
-                            measurements[candidates[i + 1].meas_id]);
+                            measurements[candidates[i + 1u].meas_id]);
                     }
 
-                    // Next measurement for original propagation flow
+                    // Next measurement for original branch
                     track_traces[trace_idx].meas_trace.push_back(
                         measurements[candidates[0u].meas_id]);
                 }
@@ -250,12 +240,26 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
             /*******************************************************
              * Propagate all tracks of this seed to the next surface
              *******************************************************/
-            for (auto& propagation : prop_streams) {
+            for (auto& nav_stream : nav_streams) {
                 // Propagation is no longer alive (track finished or hit error)
-                if (!propagation._heartbeat) {
+                if (!nav_stream.navigation.is_alive()) {
                     continue;
                 }
-                assert(propagation._navigation.is_on_sensitive());
+                assert(nav_stream.navigation.is_on_sensitive());
+
+                typename propagator_type::non_owning_state propagation(
+                    nav_stream.track_params, field, nav_stream.navigation);
+                propagation.set_particle(detail::correct_particle_hypothesis(
+                    m_cfg.ptc_hypothesis, nav_stream.track_params));
+                propagation._heartbeat = true;
+
+                // Update distance to next surface after KF
+                propagation._heartbeat &= navigator_t{}.update(
+                    propagation, m_cfg.propagation.navigation);
+                propagation._stepping._step_size = nav_stream.navigation();
+
+                assert(propagation._heartbeat);
+                assert(nav_stream.navigation.is_alive());
 
                 // Create actor states
                 // TODO: This does not work, the actor states need to be kept
@@ -269,6 +273,11 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
                 // Propagate to the next surface
                 propagator.propagate_to_next(propagation,
                                              detray::tie(s0, s1, s2, s3));
+
+                assert(nav_stream.navigation.is_complete() ||
+                       nav_stream.navigation.is_on_sensitive());
+
+                nav_stream.track_params = propagation._stepping._bound_params;
             }
         }
     }
@@ -282,12 +291,11 @@ finding_algorithm<stepper_t, navigator_t>::operator()(
     // Step through all track candidates for a given seed
     for (unsigned int seed_idx = 0u; seed_idx < n_seeds; seed_idx++) {
 
-        for (unsigned int trk_idx = 0u; trk_idx < prop_states[seed_idx].size();
-             ++trk_idx) {
-            const unsigned int trace_idx{seed_idx * n_max_prop_streams +
+        for (unsigned int trk_idx = 0u;
+             trk_idx < nav_streams_per_seed[seed_idx].size(); ++trk_idx) {
+            const unsigned int trace_idx{seed_idx * n_max_nav_streams +
                                          trk_idx};
 
-            assert(prop_states[seed_idx][trk_idx]._stepping._path_length > 0.f);
             assert(track_traces[trace_idx].meas_trace.size() > 0);
 
             if (track_traces[trace_idx].meas_trace.size() >=
