@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
 
     // Smearing value for measurements
     traccc::measurement_smearer<traccc::default_algebra> meas_smearer(
-        50 * traccc::unit<scalar>::um, 50 * traccc::unit<scalar>::um);
+        0.001 * traccc::unit<scalar>::um, 0.001 * traccc::unit<scalar>::um);
 
     using writer_type = traccc::smearing_writer<
         traccc::measurement_smearer<traccc::default_algebra>>;

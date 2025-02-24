@@ -74,6 +74,23 @@ track_candidate_container_types::host find_tracks(
     using propagator_type =
         detray::propagator<stepper_t, navigator_t, actor_type>;
 
+    /// Package measurements with the corresponding filtered track parameters
+    struct candidate {
+        bound_track_parameters<> filtered_params;
+        unsigned int meas_idx;
+        float chi2;
+
+        /// @param rhs is the right hand side candidate for comparison
+        constexpr bool operator<(const candidate& rhs) const {
+            return (chi2 < rhs.chi2);
+        }
+
+        /// @param rhs is the left hand side candidate for comparison
+        constexpr bool operator>(const candidate& rhs) const {
+            return (chi2 > rhs.chi2);
+        }
+    };
+
     assert(config.min_track_candidates_per_track >= 1);
 
     /*****************************************************************
@@ -118,6 +135,15 @@ track_candidate_container_types::host find_tracks(
     std::vector<detray::geometry::barcode> barcodes(n_modules);
     std::transform(uniques.begin(), uniques_end, barcodes.begin(),
                    [](const measurement& m) { return m.surface_link; });
+
+
+    const unsigned int n_max_branches{
+        math::min(config.max_num_branches_per_seed, 20000u)};
+    // Compatible measurements and filtered track params on a given surface
+    const unsigned int n_max_branches_per_surface{
+        math::min(config.max_num_branches_per_surface, 10u)};
+    std::vector<candidate> candidates;
+    candidates.reserve(n_max_branches_per_surface);
 
     std::vector<std::vector<candidate_link>> links;
     links.resize(config.max_track_candidates_per_track);
@@ -223,8 +249,6 @@ track_candidate_container_types::host find_tracks(
                 range.second = upper_bounds[static_cast<std::size_t>(bcd_id)];
             }
 
-            unsigned int n_branches = 0;
-
             /*****************************************************************
              * Find tracks (CKF)
              *****************************************************************/
@@ -232,9 +256,6 @@ track_candidate_container_types::host find_tracks(
             // Iterate over the measurements
             for (unsigned int item_id = range.first; item_id < range.second;
                  item_id++) {
-                if (n_branches > config.max_num_branches_per_surface) {
-                    break;
-                }
 
                 const auto& meas = measurements[item_id];
 
@@ -250,14 +271,8 @@ track_candidate_container_types::host find_tracks(
                 // The chi2 from Kalman update should be less than chi2_max
                 if (res == kalman_fitter_status::SUCCESS &&
                     chi2 < config.chi2_max) {
-                    n_branches++;
-
-                    links[step].push_back({{previous_step, in_param_id},
-                                           item_id,
-                                           orig_param_id,
-                                           skip_counter,
-                                           chi2});
-                    updated_params.push_back(trk_state.filtered());
+                    candidates.emplace_back(trk_state.filtered(), item_id,
+                                            chi2);
                 }
             }
 
@@ -265,8 +280,22 @@ track_candidate_container_types::host find_tracks(
              * Add a dummy links in case of no branches
              *****************************************************************/
 
-            if (n_branches == 0) {
+            // Number of potential new branches
+            unsigned int n_branches{math::min(
+                static_cast<unsigned int>(candidates.size()),
+                n_max_branches_per_surface)};
 
+            // Number of allowed new branches for this seed
+            /*auto allowed_branches{static_cast<int>(n_max_branches) -
+                static_cast<int>(links[step].size())};
+            allowed_branches =
+                math::signbit(allowed_branches) ? 0 : allowed_branches;
+
+            n_branches =
+                math::min(n_branches,
+                            static_cast<unsigned int>(allowed_branches));*/
+
+            if (n_branches == 0u) {
                 // Put an invalid link with max item id
                 links[step].push_back(
                     {{previous_step, in_param_id},
@@ -276,8 +305,21 @@ track_candidate_container_types::host find_tracks(
                      std::numeric_limits<traccc::scalar>::max()});
 
                 updated_params.push_back(in_param);
-                n_branches++;
+            } else {
+                // Consider only the best candidates
+                std::sort(candidates.begin(), candidates.end());
+
+                for (unsigned int i = 0u; i < n_branches; ++i) {
+                    const auto& candidate = candidates[i];
+                    links[step].push_back({{previous_step, in_param_id},
+                        candidate.meas_idx,
+                        orig_param_id,
+                        skip_counter,
+                        candidate.chi2});
+                    updated_params.push_back(candidate.filtered_params);
+                }
             }
+            candidates.clear();
         }
 
         /*********************************

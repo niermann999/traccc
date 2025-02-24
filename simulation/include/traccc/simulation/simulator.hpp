@@ -79,6 +79,7 @@ struct simulator {
     void run() {
 
         for (std::size_t event_id = 0u; event_id < m_events; event_id++) {
+            //std::cout << "EVENT " << event_id << std::endl;
 
             typename writer_t::state writer_state(
                 event_id, std::move(m_writer_cfg), m_directory);
@@ -91,6 +92,8 @@ struct simulator {
                                             m_resetter, writer_state);
 
             for (auto track : *m_track_generator.get()) {
+
+                //std::cout << "NEXT TRACK " << track << std::endl;
 
                 writer_state.write_particle(
                     track,
@@ -109,6 +112,8 @@ struct simulator {
                     m_cfg.propagation.stepping.step_constraint);
 
                 p.propagate(propagation, actor_states);
+
+                //std::cout << "COMPLETE" << std::endl;
 
                 // Increase the particle id
                 writer_state.particle_id++;

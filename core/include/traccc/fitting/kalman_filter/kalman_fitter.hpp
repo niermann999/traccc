@@ -142,6 +142,8 @@ class kalman_fitter {
     TRACCC_HOST_DEVICE [[nodiscard]] kalman_fitter_status fit(
         const seed_parameters_t& seed_params, state& fitter_state) {
 
+        //std::cout << "NEW TRACK" << std::endl;
+
         // Run the kalman filtering for a given number of iterations
         for (std::size_t i = 0; i < m_cfg.n_iterations; i++) {
 
@@ -183,6 +185,7 @@ class kalman_fitter {
     TRACCC_HOST_DEVICE [[nodiscard]] kalman_fitter_status filter(
         const seed_parameters_t& seed_params, state& fitter_state) {
 
+        //std::cout << "FILTER" << std::endl;
         // Create propagator
         propagator_type propagator(m_cfg.propagation);
 
@@ -261,6 +264,8 @@ class kalman_fitter {
         last.smoothed_chi2() = last.filtered_chi2();
 
         if (m_cfg.use_backward_filter) {
+
+            //std::cout << "SMOOTHE" << std::endl;
             // Backward propagator for the two-filters method
             backward_propagator_type propagator(m_cfg.propagation);
 
@@ -321,6 +326,15 @@ class kalman_fitter {
     void update_statistics(state& fitter_state) {
         auto& fit_res = fitter_state.m_fit_res;
         auto& track_states = fitter_state.m_fit_actor_state.m_track_states;
+
+        if (m_cfg.use_backward_filter) {
+            // If the navigator reaches the end of the track before the fitter
+            for (auto itr = fitter_state.m_fit_actor_state.m_it_rev; itr != track_states.rend(); ++itr) {
+                itr->is_hole = true;
+                fitter_state.m_fit_actor_state.n_holes++;
+                //std::cout << "HOLE update" << std::endl;
+            }
+        }
 
         // Fit parameter = smoothed track parameter of the first smoothed track
         // state

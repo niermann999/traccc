@@ -16,6 +16,8 @@
 // VecMem include(s).
 #include <vecmem/utils/debug.hpp>
 
+#include <iostream>
+
 namespace traccc {
 
 /// Aborter making sure that propagation would not exceed a certain step count
@@ -30,7 +32,7 @@ struct kalman_step_aborter : public detray::actor {
     /// The state of the aborter
     struct state {
         /// Maximum step count that a track can take to reach the next surface
-        unsigned int max_steps = 100u;
+        unsigned int max_steps = 100000u;
         /// The current step count
         unsigned int step = 0u;
     };
@@ -56,6 +58,7 @@ struct kalman_step_aborter : public detray::actor {
         // Abort if the step count exceeds the maximum allowed
         if (++(abrt_state.step) > abrt_state.max_steps) {
             VECMEM_DEBUG_MSG(1, "Kalman fitter step aborter triggered");
+            std::cout << "STEP COUNTER" << std::endl;
             prop_state._heartbeat &= navigation.abort();
         }
     }

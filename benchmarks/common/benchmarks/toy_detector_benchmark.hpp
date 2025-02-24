@@ -38,7 +38,7 @@ class ToyDetectorBenchmark : public benchmark::Fixture {
     // VecMem memory resource(s)
     vecmem::host_memory_resource host_mr;
 
-    static const int n_events = 100u;
+    static const int n_events = 50u;
     static const int n_tracks = 5000u;
 
     std::vector<traccc::spacepoint_collection_types::host> spacepoints;
@@ -79,6 +79,7 @@ class ToyDetectorBenchmark : public benchmark::Fixture {
         // Apply correct propagation config
         apply_propagation_config(finding_cfg.propagation);
         apply_propagation_config(fitting_cfg.propagation);
+        finding_cfg.max_num_branches_per_surface = 1;
 
         // Use deterministic random number generator for testing
         using uniform_gen_t = detray::detail::random_numbers<
@@ -124,7 +125,7 @@ class ToyDetectorBenchmark : public benchmark::Fixture {
             std::move(generator), std::move(smearer_writer_cfg), full_path);
 
         // Same propagation configuration for sim and reco
-        apply_propagation_config(sim.get_config().propagation);
+        apply_propagation_config_sim(sim.get_config().propagation);
         // Set constrained step size to 1 mm
         sim.get_config().propagation.stepping.step_constraint =
             1.f * traccc::unit<float>::mm;
@@ -144,22 +145,35 @@ class ToyDetectorBenchmark : public benchmark::Fixture {
     detray::toy_det_config<scalar_type> get_toy_config() const {
 
         // Create the toy geometry
-        detray::toy_det_config<scalar_type> toy_cfg{};
-        toy_cfg.n_brl_layers(4u).n_edc_layers(7u).do_check(false);
+        detray::toy_det_config<traccc::scalar> toy_cfg{};
+        toy_cfg.n_brl_layers(4u).n_edc_layers(7u).do_check(false).use_material_maps(false);
 
         // @TODO: Increase the material budget again
-        toy_cfg.module_mat_thickness(0.11f * traccc::unit<scalar_type>::mm);
+        toy_cfg.module_mat_thickness(0.0000001f * traccc::unit<traccc::scalar>::mm);
 
         return toy_cfg;
     }
 
     void apply_propagation_config(detray::propagation::config& cfg) const {
         // Configure the propagation for the toy detector
-        // cfg.navigation.search_window = {3, 3};
+        cfg.navigation.search_window = {3, 3};
+        cfg.navigation.overstep_tolerance = -500.f * traccc::unit<float>::um;
+        cfg.navigation.min_mask_tolerance = 0.1f * traccc::unit<float>::mm;
+        cfg.navigation.max_mask_tolerance = 5.f * traccc::unit<float>::mm;
+        cfg.navigation.mask_tolerance_scalor = 1.f;
+
+        cfg.stepping.min_stepsize = std::fabs(cfg.navigation.overstep_tolerance);
+    }
+
+    void apply_propagation_config_sim(detray::propagation::config& cfg) const {
+        // Configure the propagation for the toy detector
+        cfg.navigation.search_window = {3, 3};
         cfg.navigation.overstep_tolerance = -300.f * traccc::unit<float>::um;
         cfg.navigation.min_mask_tolerance = 1e-5f * traccc::unit<float>::mm;
         cfg.navigation.max_mask_tolerance = 3.f * traccc::unit<float>::mm;
         cfg.navigation.mask_tolerance_scalor = 0.05f;
+
+        cfg.stepping.min_stepsize = std::fabs(cfg.navigation.overstep_tolerance);
     }
 
     void SetUp(::benchmark::State& /*state*/) {

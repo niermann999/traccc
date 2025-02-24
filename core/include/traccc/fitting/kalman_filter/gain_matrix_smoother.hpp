@@ -16,6 +16,9 @@
 // Detray inlcude(s)
 #include <detray/geometry/shapes/line.hpp>
 
+#include <sstream>
+#include <stdexcept>
+
 namespace traccc {
 
 /// Type unrolling functor to smooth the track parameters after the Kalman
@@ -94,6 +97,12 @@ struct gain_matrix_smoother {
         const bound_matrix_type regularized_predicted_cov =
             next_predicted_cov + regularization;
 
+        if (matrix::determinant(regularized_predicted_cov) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at regularized_predicted_cov : " <<  regularized_predicted_cov << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         // Calculate smoothed parameter for current state
         const bound_matrix_type A = cur_filtered_cov *
                                     matrix::transpose(next_jacobian) *
@@ -144,6 +153,13 @@ struct gain_matrix_smoother {
             cur_state.template measurement_covariance<D>();
         const matrix_type<D, 1> residual = meas_local - H * smt_vec;
         const matrix_type<D, D> R = V - H * smt_cov * matrix::transpose(H);
+
+        if (matrix::determinant(regularized_predicted_cov) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at R : " <<  R << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         const matrix_type<1, 1> chi2 =
             matrix::transpose(residual) * matrix::inverse(R) * residual;
 

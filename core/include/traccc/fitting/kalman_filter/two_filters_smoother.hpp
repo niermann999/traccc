@@ -13,6 +13,9 @@
 #include "traccc/edm/track_state.hpp"
 #include "traccc/fitting/status_codes.hpp"
 
+#include <sstream>
+#include <stdexcept>
+
 namespace traccc {
 
 /// Type unrolling functor for two-filters smoother
@@ -80,6 +83,18 @@ struct two_filters_smoother {
         const matrix_type<e_bound_size, e_bound_size> predicted_cov =
             bound_params.covariance();
 
+        if (matrix::determinant(predicted_cov) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at predicted cov : " << predicted_cov << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
+        if (matrix::determinant(trk_state.filtered().covariance()) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at filtered cov : " << trk_state.filtered().covariance() << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         const matrix_type<e_bound_size, e_bound_size> predicted_cov_inv =
             matrix::inverse(predicted_cov);
         const matrix_type<e_bound_size, e_bound_size> filtered_cov_inv =
@@ -89,6 +104,12 @@ struct two_filters_smoother {
         // Reconstruction in Particle Detectors"
         const matrix_type<e_bound_size, e_bound_size> smoothed_cov_inv =
             predicted_cov_inv + filtered_cov_inv;
+
+        if (matrix::determinant(smoothed_cov_inv) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at smoothed cov : " << smoothed_cov_inv << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
 
         const matrix_type<e_bound_size, e_bound_size> smoothed_cov =
             matrix::inverse(smoothed_cov_inv);
@@ -113,6 +134,12 @@ struct two_filters_smoother {
         const matrix_type<D, D> R_smt =
             V - H * smoothed_cov * matrix::transpose(H);
 
+        if (matrix::determinant(R_smt) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at R smt : " << R_smt << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         // Eq (3.40) of "Pattern Recognition, Tracking and Vertex
         // Reconstruction in Particle Detectors"
         const matrix_type<1, 1> chi2_smt = matrix::transpose(residual_smt) *
@@ -132,9 +159,40 @@ struct two_filters_smoother {
         const matrix_type<D, D> M =
             H * predicted_cov * matrix::transpose(H) + V;
 
+        /*std::cout << "before" << std::endl;
+        std::cout << getter::element(M, 0, 0) << ", ";
+        std::cout << getter::element(M, 1, 0) << std::endl;
+        std::cout << getter::element(M, 0, 1) << ", ";
+        std::cout << getter::element(M, 1, 1) << std::endl;*/
+
+        if (matrix::determinant(M) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at M: " << M << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
+        /*std::cout << "after" << std::endl;
+        std::cout << getter::element(tmp, 0, 0) << ", ";
+        std::cout << getter::element(tmp, 1, 0) << std::endl;
+        std::cout << getter::element(tmp, 0, 1) << ", ";
+        std::cout << getter::element(tmp, 1, 1) << std::endl;*/
+
         // Kalman gain matrix
         const matrix_type<6, D> K =
             predicted_cov * matrix::transpose(H) * matrix::inverse(M);
+        
+        /*std::cout << getter::element(K, 0, 0) << ", ";
+        std::cout << getter::element(K, 1, 0) << ", ";
+        std::cout << getter::element(K, 2, 0) << ", ";
+        std::cout << getter::element(K, 3, 0) << ", ";
+        std::cout << getter::element(K, 4, 0) << ", ";
+        std::cout << getter::element(K, 5, 0) << std::endl;        
+        std::cout << getter::element(K, 0, 1) << ", ";
+        std::cout << getter::element(K, 1, 1) << ", ";
+        std::cout << getter::element(K, 2, 1) << ", ";
+        std::cout << getter::element(K, 3, 1) << ", ";
+        std::cout << getter::element(K, 4, 1) << ", ";
+        std::cout << getter::element(K, 5, 1) << std::endl;*/
 
         // Calculate the filtered track parameters
         const matrix_type<6, 1> filtered_vec =
@@ -146,6 +204,13 @@ struct two_filters_smoother {
 
         // Calculate backward chi2
         const matrix_type<D, D> R = (I_m - H * K) * V;
+
+        if (matrix::determinant(R) == 0) {
+            std::stringstream sstr;
+            sstr << "smoother at R : " << R << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         const matrix_type<1, 1> chi2 =
             matrix::transpose(residual) * matrix::inverse(R) * residual;
 

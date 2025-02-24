@@ -15,6 +15,8 @@
 
 // Detray inlcude(s)
 #include <detray/geometry/shapes/line.hpp>
+#include <sstream>
+#include <stdexcept>
 
 namespace traccc {
 
@@ -110,6 +112,12 @@ struct gain_matrix_updater {
         const matrix_type<D, D> M =
             H * predicted_cov * matrix::transpose(H) + V;
 
+        if (matrix::determinant(M) == 0) {
+            std::stringstream sstr;
+            sstr << "updater at M : " << M << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         // Kalman gain matrix
         const matrix_type<6, D> K =
             predicted_cov * matrix::transpose(H) * matrix::inverse(M);
@@ -124,6 +132,14 @@ struct gain_matrix_updater {
 
         // Calculate the chi square
         const matrix_type<D, D> R = (I_m - H * K) * V;
+
+        if (matrix::determinant(R) == 0) {
+            const auto tmp = (I_m - H * K);
+            std::stringstream sstr;
+            sstr << "updater at R : " <<  tmp << std::endl;
+            throw std::runtime_error(sstr.str());
+        }
+
         const matrix_type<1, 1> chi2 =
             matrix::transpose(residual) * matrix::inverse(R) * residual;
 

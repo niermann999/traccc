@@ -26,11 +26,9 @@ class detector : public interface {
     std::string detector_file =
         "geometries/odd/odd-detray_geometry_detray.json";
     /// The file containing the material description
-    std::string material_file =
-        "geometries/odd/odd-detray_material_detray.json";
+    std::string material_file = "";
     /// The file containing the surface grid description
-    std::string grid_file =
-        "geometries/odd/odd-detray_surface_grids_detray.json";
+    std::string grid_file = "";
     /// Use detray::detector for the geometry handling
     bool use_detray_detector = true;
 

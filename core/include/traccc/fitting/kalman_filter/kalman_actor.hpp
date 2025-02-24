@@ -109,28 +109,111 @@ struct kalman_actor : detray::actor {
 
         // If the iterator reaches the end, terminate the propagation
         if (actor_state.is_complete()) {
+            //std::cout << "COMPLETE" << std::endl;
             propagation._heartbeat &= navigation.abort();
             return;
+        }
+        if (navigation.is_on_surface()) {
+            //std::cout << "nav " << std::as_const(navigation).current().sf_desc.barcode() << std::endl;
         }
 
         // triggered only for sensitive surfaces
         if (navigation.is_on_sensitive()) {
 
+            //std::cout << "BEFORE\n" << stepping.bound_params() << std::endl;
             auto& trk_state = actor_state();
 
             // Increase the hole counts if the propagator fails to find the next
             // measurement
             if (navigation.barcode() != trk_state.surface_link()) {
-                if (!actor_state.backward_mode) {
-                    actor_state.n_holes++;
+                int i = 1;
+                bool found{false};
+
+                //std::cout << "expected " << trk_state.surface_link() << ", found " << navigation.barcode() << std::endl;
+
+                //std::cout << "Track states" << std::endl;
+                // The last state could not be found: Abort
+                for (const auto& trk : actor_state.m_track_states) {
+                    //std::cout << trk.surface_link() << std::endl;
                 }
-                return;
+
+                // If the current navigation position can be found at a later
+                // track state, then the current track state was skipped:
+                // Advance the iterator to keep up with the navigation
+                if (actor_state.backward_mode) {
+                    // The last state could not be found: Abort
+                    if (actor_state.m_it_rev + 1 == actor_state.m_track_states.rend()) {
+                        // Did the navigator find an additional surface?
+                        if (trk_state.surface_link() != std::as_const(navigation).target().sf_desc.barcode()) {
+                            if (!std::as_const(navigation).target().sf_desc.is_sensitive()) {
+                                return;
+                            }
+                            trk_state.is_hole = true;
+                            actor_state.n_holes++;
+                            actor_state.m_it_rev++; // < prevent double counting of last hole
+                            propagation._heartbeat &= navigation.abort();
+                            //std::cout << "HOLE last" << std::endl;
+                            return;
+                        }
+                    }
+                    // Check how many track states were skipped
+                    for (auto itr = actor_state.m_it_rev + 1; 
+                         itr != actor_state.m_track_states.rend(); ++itr) {
+                        if (itr->surface_link() == navigation.barcode()) {
+                            //std::cout << "FOUND IT" << std::endl;
+                            actor_state.m_it_rev += i;
+                            // Only count holes on the most precise fit
+                            actor_state.n_holes += i;
+                            found = true;
+                            for (std::size_t j=0; j < i; ++j) {
+                                //(itr+j)->is_hole = true;
+                                //std::cout << "HOLE skipped" << std::endl;
+                            }
+                            break;
+                        }
+                        ++i;
+                    }
+                } else {
+                    // Did the navigator find an additional surface?
+                    if (actor_state.m_it + 1 == actor_state.m_track_states.end()) {
+                        if (trk_state.surface_link() != std::as_const(navigation).target().sf_desc.barcode()) {
+                            if (!std::as_const(navigation).target().sf_desc.is_sensitive()) {
+                                return;
+                            }
+                            trk_state.is_hole = true;
+                            actor_state.n_holes++;
+                            propagation._heartbeat &= navigation.abort();
+                            //std::cout << "HOLE last forward" << std::endl;
+                            return;
+                        }
+                    }
+                    for (auto itr = actor_state.m_it + 1; itr != actor_state.m_track_states.end(); ++itr) {
+                        if (itr->surface_link() == navigation.barcode()) {
+                            //std::cout << "FOUND IT" << std::endl;
+                            actor_state.m_it += i;
+                            found = true;
+                            for (std::size_t j=0; j < i; ++j) {
+                                //std::cout << "HOLE " << std::endl;
+                                //(itr+j)->is_hole = true;
+                            }
+                            break;
+                        }
+                        ++i;
+                    }
+                }
+                if (!found) {
+                    //std::cout << "test next ";
+                    if (actor_state.backward_mode) {
+                        //std::cout << actor_state.m_it_rev->surface_link() << std::endl;
+                    } else {
+                        //std::cout << actor_state.m_it->surface_link() << std::endl;
+                    }
+                    return;
+                }
             }
 
             // This track state is not a hole
-            if (!actor_state.backward_mode) {
-                trk_state.is_hole = false;
-            }
+            trk_state.is_hole = false;
 
             // Run Kalman Gain Updater
             const auto sf = navigation.get_surface();
@@ -156,6 +239,7 @@ struct kalman_actor : detray::actor {
             // Abort if the Kalman update fails
             if (res != kalman_fitter_status::SUCCESS) {
                 propagation._heartbeat &= navigation.abort();
+                //std::cout << "FIT FAILURE\n" << std::endl;
                 return;
             }
 
@@ -171,6 +255,8 @@ struct kalman_actor : detray::actor {
 
             // Flag renavigation of the current candidate
             navigation.set_high_trust();
+
+            //std::cout << "AFTER\n" << stepping.bound_params() << std::endl;
         }
     }
 };

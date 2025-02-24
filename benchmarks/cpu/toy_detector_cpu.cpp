@@ -42,7 +42,8 @@ BENCHMARK_DEFINE_F(ToyDetectorBenchmark, CPU)(benchmark::State& state) {
     host_detector_type det{host_mr};
     traccc::io::read_detector(
         det, host_mr, sim_dir + "toy_detector_geometry.json",
-        sim_dir + "toy_detector_homogeneous_material.json",
+        //sim_dir + "toy_detector_homogeneous_material.json",
+        //sim_dir + "toy_detector_material_maps.json",
         sim_dir + "toy_detector_surface_grids.json");
 
     // B field
@@ -58,7 +59,7 @@ BENCHMARK_DEFINE_F(ToyDetectorBenchmark, CPU)(benchmark::State& state) {
     for (auto _ : state) {
 
 // Iterate over events
-#pragma omp parallel for schedule(dynamic)
+//#pragma omp parallel for schedule(dynamic)
         for (unsigned int i_evt = 0; i_evt < n_events; i_evt++) {
 
             auto& spacepoints_per_event = spacepoints[i_evt];

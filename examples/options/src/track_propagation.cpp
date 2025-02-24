@@ -67,6 +67,7 @@ void track_propagation::read(const po::variables_map &) {
     m_config.navigation.min_mask_tolerance *= traccc::unit<float>::mm;
     m_config.navigation.max_mask_tolerance *= traccc::unit<float>::mm;
     m_config.navigation.search_window = m_search_window;
+    //m_config.stepping.min_stepsize = std::fabs(m_config.navigation.overstep_tolerance);
 }
 
 track_propagation::operator detray::propagation::config() const {
